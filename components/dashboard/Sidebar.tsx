@@ -6,13 +6,22 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Button } from "@heroui/button";
 import { Avatar } from "@heroui/avatar";
 import { 
-  LayoutDashboard, Settings, Users, Shield, Key, 
-  LogOut, ChevronDown, ChevronRight, Store, X 
+  LogOut, ChevronDown, ChevronRight, Store, X, Loader2 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { authService } from '@/services/auth.service'; // Asegúrate que la ruta sea correcta
-// Importamos los tipos limpios
-import { UserSession, MenuItem } from '@/types/auth.types';
+import { authService } from '@/services/auth.service'; 
+import { UserSession } from '@/types/auth.types';
+import { getIcon } from '@/lib/icon-map'; // <--- Asegúrate que esta ruta exista
+
+// Interfaz para el menú que viene de la BD
+interface MenuItemDB {
+  id: number;
+  codigo: string;
+  titulo: string;
+  icono: string;
+  ruta: string | null;
+  hijos?: MenuItemDB[];
+}
 
 export function Sidebar({ 
   isMobileOpen, 
@@ -24,61 +33,105 @@ export function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   
+  // MANTENEMOS TU LÓGICA DE USUARIO EXACTA
   const [user, setUser] = useState<UserSession | null>(null);
-  const [isConfigOpen, setIsConfigOpen] = useState(true);
+  
+  // Estados nuevos para el menú dinámico
+  const [menuItems, setMenuItems] = useState<MenuItemDB[]>([]);
+  const [loadingMenu, setLoadingMenu] = useState(true);
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({
+    'configuracion': true // Configuración abierta por defecto si viene del backend
+  });
 
-  // Solución al error de useEffect y setState
+  // useEffect Combinado: Carga Usuario (Tu lógica) + Carga Menús (Nueva lógica)
   useEffect(() => {
       if (typeof window !== 'undefined') {
         const userStr = localStorage.getItem('user');
+        
+        // 1. Cargar Usuario (Tu método seguro con setTimeout)
         if (userStr) {
           try {
             const parsedUser = JSON.parse(userStr) as UserSession;
-            
-            // SOLUCIÓN: Usamos setTimeout para evitar la actualización síncrona estricta
             setTimeout(() => {
               setUser(parsedUser);
             }, 0);
-            
           } catch (e) {
             console.error("Error leyendo sesión", e);
           }
         }
+
+        // 2. Cargar Menús Dinámicos (Solo si hay token)
+        // Esto corre en paralelo y no afecta al setUser
+        authService.getMyMenus()
+          .then((data) => setMenuItems(data))
+          .catch((err) => {
+             console.error("Error cargando menús:", err);
+             // Si falla, podrías dejar un array vacío o manejar el error
+          })
+          .finally(() => setLoadingMenu(false));
       }
-    }, []); // <--- IMPORTANTE: Este array vacío previene el bucle infinito
+    }, []); 
 
   const handleLogout = () => {
     authService.logout();
     router.push('/login');
   };
 
-  const isActive = (path: string) => pathname === path;
-  const isConfigActive = pathname.includes('/dashboard/configuracion');
-
-  // Definición de menús usando el tipo MenuItem
-  const mainItems: MenuItem[] = [
-    {
-      title: "Dashboard",
-      href: "/dashboard",
-      icon: LayoutDashboard,
-    }
-  ];
-
-  const configItems: MenuItem[] = [
-    { title: "Locales", href: "/dashboard/configuracion/locales", icon: Store, requiredPermission: 'VER_LOCALES' },
-    { title: "Usuarios", href: "/dashboard/configuracion/usuarios", icon: Users, requiredPermission: 'VER_USUARIOS' },
-    { title: "Roles", href: "/dashboard/configuracion/roles", icon: Shield, requiredPermission: 'VER_ROLES' },
-    { title: "Permisos", href: "/dashboard/configuracion/permisos", icon: Key, requiredPermission: 'VER_PERMISOS' },
-  ];
-
-  const hasAccess = (item: MenuItem) => {
-    if (!user) return false;
-    if (user.rol === 'Dueño') return true;
-    if (!item.requiredPermission) return true;
-    return user.permisos?.includes(item.requiredPermission);
+  const toggleSubmenu = (codigo: string) => {
+    setOpenMenus(prev => ({ ...prev, [codigo]: !prev[codigo] }));
   };
 
-  const visibleConfigItems = configItems.filter(hasAccess);
+  const isActive = (path: string | null) => path ? pathname === path : false;
+  
+  // Función recursiva para renderizar menús y submenús
+  const renderMenuItem = (item: MenuItemDB) => {
+    const Icon = getIcon(item.icono); // Traducimos texto -> Icono React
+    const hasChildren = item.hijos && item.hijos.length > 0;
+    const isOpen = openMenus[item.codigo];
+
+    // CASO A: Menú con hijos (Submenú desplegable)
+    if (hasChildren) {
+      return (
+        <div key={item.id} className="pt-1">
+          <div 
+            onClick={() => toggleSubmenu(item.codigo)}
+            className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-slate-300 hover:bg-slate-800 hover:text-white`}
+          >
+            <div className="flex items-center gap-3">
+              <Icon size={20} />
+              <span className="font-medium">{item.titulo}</span>
+            </div>
+            {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </div>
+
+          <AnimatePresence>
+            {isOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-1 space-y-1 border-l border-slate-800 ml-5 pl-3">
+                  {item.hijos!.map(child => renderMenuItem(child))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    }
+
+    // CASO B: Enlace simple
+    return (
+      <Link key={item.id} href={item.ruta || '#'}>
+        <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 mb-1 ${isActive(item.ruta) ? 'bg-orange-600 text-white font-medium shadow-lg shadow-orange-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+          <Icon size={20} />
+          <span>{item.titulo}</span>
+        </div>
+      </Link>
+    );
+  };
 
   return (
     <>
@@ -105,55 +158,20 @@ export function Sidebar({
             </button>
           </div>
 
-          {/* Navegación */}
-          <div className="flex-1 overflow-y-auto py-6 px-4 space-y-2">
-            
-            {/* Main Items */}
-            {mainItems.filter(hasAccess).map((item) => (
-              <Link key={item.href} href={item.href}>
-                <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${isActive(item.href) ? 'bg-orange-600 text-white font-medium shadow-lg shadow-orange-900/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-                  <item.icon size={20} />
-                  <span>{item.title}</span>
-                </div>
-              </Link>
-            ))}
-
-            {/* Configuración */}
-            {visibleConfigItems.length > 0 && (
-              <div className="pt-4">
-                <div 
-                  onClick={() => setIsConfigOpen(!isConfigOpen)}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${isConfigActive ? 'text-white' : 'hover:bg-slate-800 hover:text-white'}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Settings size={20} />
-                    <span className="font-medium">Configuración</span>
-                  </div>
-                  {isConfigOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                </div>
-
-                <AnimatePresence>
-                  {isConfigOpen && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pl-4 mt-1 space-y-1 border-l border-slate-800 ml-5">
-                        {visibleConfigItems.map((subItem) => (
-                          <Link key={subItem.href} href={subItem.href}>
-                            <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${isActive(subItem.href) ? 'bg-slate-800 text-orange-400 font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
-                              <subItem.icon size={16} />
-                              <span>{subItem.title}</span>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+          {/* Navegación Dinámica */}
+          <div className="flex-1 overflow-y-auto py-6 px-4">
+            {loadingMenu ? (
+              <div className="flex justify-center mt-10">
+                <Loader2 className="animate-spin text-orange-500" />
               </div>
+            ) : (
+              // Aquí renderizamos lo que devuelve el backend
+              menuItems.map(item => renderMenuItem(item))
+            )}
+            
+            {/* Fallback visual si no hay menús */}
+            {!loadingMenu && menuItems.length === 0 && (
+                <p className="text-center text-slate-500 text-sm mt-4">Sin menús asignados</p>
             )}
           </div>
 
@@ -168,6 +186,7 @@ export function Sidebar({
                 </div>
               </div>
             ) : (
+              // Skeleton simple mientras carga usuario
               <div className="flex items-center gap-3 mb-4 animate-pulse">
                 <div className="w-10 h-10 bg-slate-800 rounded-full"></div>
                 <div className="space-y-2">

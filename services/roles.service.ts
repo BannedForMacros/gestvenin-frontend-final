@@ -17,7 +17,12 @@ export const rolesService = {
       body: JSON.stringify(data),
     });
     const result = await res.json();
-    if (!res.ok) throw new Error(result.message || 'Error al crear rol');
+    
+    // CAMBIO IMPORTANTE: Lanzamos 'result' directo si hay error, 
+    // así conservamos propiedades extra como 'permisosFaltantes'
+    if (!res.ok) {
+        throw result; 
+    }
     return result;
   },
 
@@ -28,7 +33,11 @@ export const rolesService = {
       body: JSON.stringify(data),
     });
     const result = await res.json();
-    if (!res.ok) throw new Error(result.message || 'Error al asignar permisos');
+    
+    // CAMBIO IMPORTANTE: Igual aquí, lanzamos el objeto completo
+    if (!res.ok) {
+        throw result;
+    }
     return result;
   }
 };

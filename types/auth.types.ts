@@ -60,3 +60,14 @@ export interface MenuItem {
   icon: LucideIcon; // Solución al error de "any" en los íconos
   requiredPermission?: string;
 }
+
+export interface MenuItemDB {
+  id: number;
+  codigo: string;
+  titulo: string;
+  icono: string;
+  ruta: string | null;
+  permiso_requerido: string | null; // Mapea exactamente a tu BD
+  orden?: number;
+  hijos?: MenuItemDB[];
+}
