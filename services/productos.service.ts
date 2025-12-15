@@ -29,7 +29,18 @@ export const productosService = {
     return res.json();
   },
 
-  // 3. Crear Producto (Envía datos + unidades juntos, el backend lo soporta en POST)
+  // 3. Obtener Unidades de un Producto (¡ESTE FALTABA!)
+  // Se usa en el Modal de Requerimientos para llenar el select de unidades
+  async getUnidades(id: number): Promise<ProductoUnidad[]> {
+    const res = await fetch(`${API_URL}/productos/${id}/unidades`, { 
+      headers: getAuthHeaders() 
+    });
+    
+    if (!res.ok) throw new Error('Error al obtener unidades del producto');
+    return res.json();
+  },
+
+  // 4. Crear Producto
   async create(data: CrearProductoDto): Promise<Producto> {
     const res = await fetch(`${API_URL}/productos`, {
       method: 'POST',
@@ -45,7 +56,7 @@ export const productosService = {
     return result;
   },
 
-  // 4. Actualizar Producto (Solo datos básicos, SIN unidades)
+  // 5. Actualizar Producto (Solo datos básicos)
   async update(id: number, data: EditarProductoDto): Promise<Producto> {
     const res = await fetch(`${API_URL}/productos/${id}`, {
       method: 'PATCH',
@@ -61,7 +72,7 @@ export const productosService = {
     return result;
   },
 
-  // 5. Asignar Unidades (Endpoint específico para actualizar las unidades)
+  // 6. Asignar Unidades (Endpoint específico)
   async assignUnits(id: number, data: { unidades: ProductoUnidadDto[] }): Promise<void> {
     const res = await fetch(`${API_URL}/productos/${id}/unidades`, {
       method: 'POST',
@@ -76,7 +87,7 @@ export const productosService = {
     }
   },
 
-  // 6. Eliminar Producto
+  // 7. Eliminar Producto
   async delete(id: number): Promise<void> {
     const res = await fetch(`${API_URL}/productos/${id}`, { 
       method: 'DELETE', 
