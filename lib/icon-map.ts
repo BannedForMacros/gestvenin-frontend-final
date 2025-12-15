@@ -1,7 +1,8 @@
 import { 
   LayoutDashboard, Settings, Users, Shield, Key, 
   Store, Package, ShoppingCart, Box, Warehouse, 
-  ClipboardList, FileText, LucideIcon 
+  ClipboardList, FileText, LucideIcon, Ruler,
+  Tags 
 } from "lucide-react";
 
 // CORRECCIÓN: Usamos 'LucideIcon' en lugar de 'any'
@@ -17,7 +18,9 @@ export const IconMap: Record<string, LucideIcon> = {
   'Box': Box,
   'Warehouse': Warehouse,
   'ClipboardList': ClipboardList,
-  'FileText': FileText
+  'FileText': FileText,
+  'Ruler': Ruler,
+  'Tags': Tags,
 };
 
 // Tipamos el retorno de la función también

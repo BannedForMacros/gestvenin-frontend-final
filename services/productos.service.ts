@@ -1,46 +1,88 @@
 import { API_URL, getAuthHeaders } from '@/lib/api.config';
-import { Producto, CrearProductoDto, EditarProductoDto } from '@/types/productos.types';
+import { Producto, CrearProductoDto, EditarProductoDto, ProductoUnidadDto, ProductoUnidad } from '@/types/productos.types';
+import { PaginatedResponse } from '@/types/common.types';
 
 export const productosService = {
-  async getAll(): Promise<Producto[]> {
-    const res = await fetch(`${API_URL}/productos`, {
-      headers: getAuthHeaders(),
-      cache: 'no-store' // Importante para no cachear datos viejos
+  // 1. Obtener Paginado (Para la tabla)
+  async getAll(page: number = 1, limit: number = 10, search: string = ''): Promise<PaginatedResponse<Producto>> {
+    const url = new URL(`${API_URL}/productos`);
+    url.searchParams.append('page', page.toString());
+    url.searchParams.append('limit', limit.toString());
+    if (search) url.searchParams.append('search', search);
+
+    const res = await fetch(url.toString(), { 
+      headers: getAuthHeaders(), 
+      cache: 'no-store' 
     });
+    
     if (!res.ok) throw new Error('Error al obtener productos');
     return res.json();
   },
 
+  // 2. Obtener por ID con detalle (Incluye unidades para editar)
+  async getById(id: number): Promise<Producto> {
+    const res = await fetch(`${API_URL}/productos/${id}`, { 
+      headers: getAuthHeaders() 
+    });
+    
+    if (!res.ok) throw new Error('Error al obtener producto');
+    return res.json();
+  },
+
+  // 3. Crear Producto (Envía datos + unidades juntos, el backend lo soporta en POST)
   async create(data: CrearProductoDto): Promise<Producto> {
     const res = await fetch(`${API_URL}/productos`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
+    
     const result = await res.json();
-    if (!res.ok) throw new Error(result.message || 'Error al crear producto');
+    if (!res.ok) {
+        const msg = result.message || 'Error al crear producto';
+        throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
+    }
     return result;
   },
 
+  // 4. Actualizar Producto (Solo datos básicos, SIN unidades)
   async update(id: number, data: EditarProductoDto): Promise<Producto> {
     const res = await fetch(`${API_URL}/productos/${id}`, {
       method: 'PATCH',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
+    
     const result = await res.json();
-    if (!res.ok) throw new Error(result.message || 'Error al actualizar producto');
+    if (!res.ok) {
+        const msg = result.message || 'Error al actualizar producto';
+        throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
+    }
     return result;
   },
 
-  async delete(id: number): Promise<void> {
-    const res = await fetch(`${API_URL}/productos/${id}`, {
-      method: 'DELETE',
+  // 5. Asignar Unidades (Endpoint específico para actualizar las unidades)
+  async assignUnits(id: number, data: { unidades: ProductoUnidadDto[] }): Promise<void> {
+    const res = await fetch(`${API_URL}/productos/${id}/unidades`, {
+      method: 'POST',
       headers: getAuthHeaders(),
+      body: JSON.stringify(data),
     });
+    
     if (!res.ok) {
-        const result = await res.json();
-        throw new Error(result.message || 'Error al eliminar producto');
+       const result = await res.json();
+       const msg = result.message || 'Error al asignar unidades';
+       throw new Error(Array.isArray(msg) ? msg.join(', ') : msg);
     }
+  },
+
+  // 6. Eliminar Producto
+  async delete(id: number): Promise<void> {
+    const res = await fetch(`${API_URL}/productos/${id}`, { 
+      method: 'DELETE', 
+      headers: getAuthHeaders() 
+    });
+    
+    if (!res.ok) throw new Error('Error al eliminar producto');
   }
 };

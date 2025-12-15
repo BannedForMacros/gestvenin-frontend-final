@@ -1,222 +1,231 @@
 'use client'
 
-import { useEffect, useState } from 'react';
-import { 
-  Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Button, Input, Tooltip, Chip, useDisclosure,
-  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter
-} from "@heroui/react";
-import { 
-  Plus, Search, Edit3, Trash2, Package, AlertTriangle 
-} from "lucide-react";
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Button, Tooltip, SortDescriptor } from "@heroui/react";
+import { Plus, Edit3, Trash2, Package } from "lucide-react";
+import { toast } from "sonner"; 
+
 import { productosService } from '@/services/productos.service';
 import { Producto, CrearProductoDto } from '@/types/productos.types';
+import { useConfirm } from '@/providers/ConfirmProvider'; 
+import { useUIConfig } from "@/providers/UIConfigProvider";
+
+import { DataTable, Column } from '@/components/DataTable';
 import { ProductoModal } from './components/ProductoModal';
 
+const columns: Column[] = [
+  { name: "PRODUCTO", uid: "nombre", sortable: true },
+  { name: "CÓDIGO", uid: "codigo", sortable: true },
+  { name: "STOCK MÍN", uid: "stock_minimo", sortable: true },
+  { name: "ACCIONES", uid: "acciones" },
+];
+
 export default function ProductosPage() {
-  // Estados de datos
-  const [productos, setProductos] = useState<Producto[]>([]);
-  const [filterValue, setFilterValue] = useState("");
+  const { config } = useUIConfig();
+  const { confirm } = useConfirm();
+
+  const [data, setData] = useState<Producto[]>([]);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Estados de Modales
-  const { isOpen, onOpen, onOpenChange } = useDisclosure(); // Modal Formulario
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false); // Modal Eliminar
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const PER_PAGE = 10;
+
+  const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor>({ 
+    column: "nombre", 
+    direction: "ascending" 
+  });
   
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
 
-  // Cargar datos
-  const fetchData = async () => {
+  // 1. Carga de datos
+  const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await productosService.getAll();
-      setProductos(data);
+      const response = await productosService.getAll(page, PER_PAGE, search);
+      setData(response.data);
+      setTotal(response.meta.total);
     } catch (error) {
       console.error(error);
+      toast.error("Error al cargar productos");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [page, search]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  // Filtrado (Búsqueda local simple)
-  const filteredProductos = productos.filter((p) => 
-    p.nombre.toLowerCase().includes(filterValue.toLowerCase()) ||
-    (p.codigo && p.codigo.toLowerCase().includes(filterValue.toLowerCase()))
-  );
+  // 2. Ordenamiento en cliente (página actual)
+  const sortedItems = useMemo(() => {
+    return [...data].sort((a: Producto, b: Producto) => {
+      const first = a[sortDescriptor.column as keyof Producto];
+      const second = b[sortDescriptor.column as keyof Producto];
+      const firstVal = first || "";
+      const secondVal = second || "";
+      const cmp = firstVal < secondVal ? -1 : 1;
+      return sortDescriptor.direction === "descending" ? -cmp : cmp;
+    });
+  }, [sortDescriptor, data]);
 
-  // --- MANEJADORES ---
+  // --- Handlers CRUD ---
 
   const handleCreate = () => {
     setSelectedProducto(null);
-    onOpen();
+    setIsModalOpen(true);
   };
 
-  const handleEdit = (producto: Producto) => {
-    setSelectedProducto(producto);
-    onOpen();
-  };
-
-  const handleDeleteClick = (producto: Producto) => {
-    setSelectedProducto(producto);
-    setDeleteModalOpen(true);
-  };
-
-  const onFormSubmit = async (data: CrearProductoDto) => {
-    if (selectedProducto) {
-      await productosService.update(selectedProducto.id, data);
-    } else {
-      await productosService.create(data);
-    }
-    fetchData(); // Recargar tabla
-  };
-
-  const confirmDelete = async () => {
-    if (!selectedProducto) return;
+  const handleEdit = useCallback(async (prodSimple: Producto) => {
+    const toastId = toast.loading("Cargando detalles...");
     try {
-      await productosService.delete(selectedProducto.id);
-      setDeleteModalOpen(false);
-      fetchData();
+      // Obtenemos el producto completo (incluyendo sus unidades)
+      const prodCompleto = await productosService.getById(prodSimple.id);
+      setSelectedProducto(prodCompleto);
+      toast.dismiss(toastId);
+      setIsModalOpen(true);
     } catch (error) {
-      alert("Error al eliminar"); // Aquí podrías usar un estado de error en el modal
+      console.error(error);
+      toast.error("Error cargando producto", { id: toastId });
+    }
+  }, []); 
+
+  // --- LÓGICA DE GUARDADO CORREGIDA ---
+  const onFormSubmit = async (dto: CrearProductoDto) => {
+    try {
+      if (selectedProducto) {
+        // MODO EDICIÓN:
+        // El endpoint PATCH no acepta 'unidades', así que las separamos.
+        const { unidades, ...datosProducto } = dto;
+
+        // 1. Actualizamos datos básicos (Nombre, Stock, etc.)
+        await productosService.update(selectedProducto.id, datosProducto);
+
+        // 2. Actualizamos las unidades en su endpoint específico
+        await productosService.assignUnits(selectedProducto.id, { unidades });
+
+        toast.success("Producto actualizado correctamente");
+      } else {
+        // MODO CREACIÓN:
+        // El endpoint POST sí acepta todo junto.
+        await productosService.create(dto);
+        toast.success("Producto creado correctamente");
+      }
+      setIsModalOpen(false);
+      fetchData();
+    } catch (error: unknown) {
+       // Relanzamos el error para que el Modal lo muestre en rojo
+       throw error; 
     }
   };
 
-  return (
-    <div className="space-y-6 p-4">
-      {/* Cabecera y Buscador */}
-      <div className="flex flex-col sm:flex-row justify-between gap-4 items-end sm:items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Inventario de Productos</h1>
-          <p className="text-slate-500">Gestiona el catálogo de productos de tu empresa.</p>
-        </div>
-        <div className="flex gap-3 w-full sm:w-auto">
-          <Input
-            isClearable
-            classNames={{
-              base: "w-full sm:max-w-[44%]",
-              inputWrapper: "border-1",
-            }}
-            placeholder="Buscar por nombre o código..."
-            size="sm"
-            startContent={<Search className="text-default-300" />}
-            value={filterValue}
-            onClear={() => setFilterValue("")}
-            onValueChange={setFilterValue}
-            className="w-full sm:w-64"
-          />
-          <Button onPress={handleCreate} color="primary" endContent={<Plus />}>
-            Nuevo Producto
-          </Button>
-        </div>
-      </div>
+  const handleDelete = useCallback(async (prod: Producto) => {
+      const ok = await confirm({ 
+        title: "Eliminar Producto", 
+        message: `¿Estás seguro de eliminar "${prod.nombre}"?`, 
+        color: "danger" 
+      });
+      
+      if(!ok) return;
+      
+      try {
+          await productosService.delete(prod.id);
+          toast.success("Producto eliminado");
+          fetchData();
+      } catch(e) { 
+        console.error(e);
+        toast.error("Error al eliminar el producto"); 
+      }
+  }, [confirm, fetchData]); 
 
-      {/* Tabla */}
-      <Table aria-label="Tabla de productos" classNames={{ wrapper: "min-h-[222px]" }}>
-        <TableHeader>
-          <TableColumn>PRODUCTO</TableColumn>
-          <TableColumn>CATEGORÍA</TableColumn>
-          <TableColumn>UNIDAD</TableColumn>
-          <TableColumn>STOCK MÍN.</TableColumn>
-          <TableColumn align="center">ACCIONES</TableColumn>
-        </TableHeader>
-        <TableBody 
-          items={filteredProductos}
-          isLoading={isLoading}
-          loadingContent={<p>Cargando inventario...</p>}
-          emptyContent={"No se encontraron productos"}
-        >
-          {(item) => (
-            <TableRow key={item.id}>
-              <TableCell>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary-50 text-primary rounded-lg">
-                    <Package size={20} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-slate-900">{item.nombre}</p>
-                    <p className="text-tiny text-slate-500">{item.codigo || 'S/C'}</p>
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell>
-                {item.categoria ? (
-                    <Chip size="sm" variant="flat">{item.categoria}</Chip>
-                ) : <span className="text-slate-400">-</span>}
-              </TableCell>
-              <TableCell>
-                <span className="capitalize text-sm">{item.unidad_medida.toLowerCase()}</span>
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                    <span className="font-semibold">{item.stock_minimo}</span>
-                </div>
-              </TableCell>
-              <TableCell>
-                <div className="relative flex items-center justify-center gap-2">
-                  <Tooltip content="Editar">
+  // --- Renderizado de Celdas ---
+  const renderCell = useCallback((item: Producto, columnKey: React.Key) => {
+    switch (columnKey) {
+      case "nombre":
+        return (
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+              <Package size={20} />
+            </div>
+            <div>
+              <p className={`font-bold text-slate-900 ${config.textSize}`}>{item.nombre}</p>
+              {item.categoria_id && <p className="text-tiny text-slate-500">Cat ID: {item.categoria_id}</p>}
+            </div>
+          </div>
+        );
+      case "codigo":
+        return <span className={config.textSize}>{item.codigo || '-'}</span>;
+      case "stock_minimo":
+        return <span className={`font-medium ${config.textSize}`}>{item.stock_minimo}</span>;
+      case "acciones":
+         return (
+             <div className="flex justify-center gap-2">
+                 <Tooltip content="Editar">
                     <span 
                       onClick={() => handleEdit(item)} 
-                      className="text-lg text-default-400 cursor-pointer active:opacity-50 hover:text-primary"
+                      className="cursor-pointer text-slate-400 hover:text-primary p-2 active:opacity-50"
                     >
                       <Edit3 size={18} />
                     </span>
-                  </Tooltip>
-                  <Tooltip color="danger" content="Eliminar">
+                 </Tooltip>
+                 <Tooltip content="Eliminar">
                     <span 
-                      onClick={() => handleDeleteClick(item)} 
-                      className="text-lg text-danger cursor-pointer active:opacity-50 hover:text-danger-400"
+                      onClick={() => handleDelete(item)} 
+                      className="cursor-pointer text-danger hover:text-danger-400 p-2 active:opacity-50"
                     >
                       <Trash2 size={18} />
                     </span>
-                  </Tooltip>
-                </div>
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+                 </Tooltip>
+             </div>
+         )
+      default:
+        // Casteo seguro
+        const val = (item as unknown as Record<string, unknown>)[columnKey as string];
+        return <span className={config.textSize}>{String(val)}</span>;
+    }
+  }, [config, handleEdit, handleDelete]);
 
-      {/* 1. Modal Formulario (Componente separado) */}
-      <ProductoModal 
-        isOpen={isOpen} 
-        onClose={onOpenChange} 
-        onSubmit={onFormSubmit} 
-        productoAEditar={selectedProducto} 
+  return (
+    <div className="space-y-6 p-4">
+       <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Productos</h1>
+          <p className={`${config.textSize} text-slate-500`}>Administra tu catálogo.</p>
+        </div>
+        <Button 
+          onPress={handleCreate} 
+          className="bg-slate-900 text-white font-medium" 
+          size={config.buttonSize} 
+          endContent={<Plus size={18}/>}
+        >
+           <span className={config.textSize}>Nuevo Producto</span>
+        </Button>
+      </div>
+
+      <DataTable<Producto>
+        columns={columns}
+        data={sortedItems}
+        totalItems={total}
+        page={page}
+        perPage={PER_PAGE}
+        onPageChange={setPage}
+        searchQuery={search}
+        onSearchChange={(v) => { setSearch(v); setPage(1); }}
+        isLoading={isLoading}
+        renderCell={renderCell}
+        
+        sortDescriptor={sortDescriptor}
+        onSortChange={setSortDescriptor}
       />
 
-      {/* 2. Modal de Confirmación de Eliminación (Nativo de HeroUI) */}
-      <Modal 
-        isOpen={deleteModalOpen} 
-        onOpenChange={setDeleteModalOpen}
-        size="sm"
-      >
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex gap-2 items-center text-danger">
-                <AlertTriangle size={24}/> Confirmar Eliminación
-              </ModalHeader>
-              <ModalBody>
-                <p>¿Estás seguro que deseas eliminar el producto <b>{selectedProducto?.nombre}</b>?</p>
-                <p className="text-sm text-slate-500">Esta acción no se puede deshacer.</p>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={onClose}>
-                  Cancelar
-                </Button>
-                <Button color="danger" onPress={confirmDelete}>
-                  Sí, Eliminar
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-
+      <ProductoModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={onFormSubmit}
+        productoAEditar={selectedProducto}
+      />
     </div>
   );
 }
