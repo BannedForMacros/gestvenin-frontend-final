@@ -1,14 +1,20 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Button, Tooltip, Chip, SortDescriptor } from "@heroui/react";
-import { Plus, Edit3, Trash2, Send, FileText } from "lucide-react";
+import { Button, Tooltip, Chip, SortDescriptor, Tabs, Tab } from "@heroui/react";
+import { Plus, Edit3, Trash2, Send, FileText, CheckCircle, XCircle, Eye, Clock, PackageCheck, Ban } from "lucide-react"; 
 import { toast } from "sonner"; 
 
 import { requerimientosService } from '@/services/requerimientos.service';
-import { Requerimiento, RequerimientoCompleto, CrearRequerimientoDto } from '@/types/requerimientos.types';
+import { 
+  Requerimiento, 
+  RequerimientoCompleto, 
+  CrearRequerimientoDto, 
+  RevisarRequerimientoDto 
+} from '@/types/requerimientos.types';
 import { useConfirm } from '@/providers/ConfirmProvider'; 
 import { useUIConfig } from "@/providers/UIConfigProvider";
+import { useAuth } from '@/providers/AuthProvider';
 
 import { DataTable, Column } from '@/components/DataTable';
 import { RequerimientoModal } from './components/RequerimientoModal';
@@ -30,9 +36,23 @@ const statusColorMap: Record<string, "default" | "warning" | "success" | "danger
   eliminado: "danger"
 };
 
+const statusLabels: Record<string, string> = {
+  borrador: "Borrador",
+  revision: "En Revisión",
+  aprobado: "Aprobado",
+  rechazado: "Rechazado",
+  comprado: "Comprado",
+  eliminado: "Eliminado"
+};
+
 export default function RequerimientosPage() {
   const { config } = useUIConfig();
   const { confirm } = useConfirm();
+  const { hasPermission } = useAuth();
+
+  const CAN_CREATE = hasPermission('requerimientos.crear');
+  const CAN_EDIT = hasPermission('requerimientos.editar'); 
+  const CAN_APPROVE = hasPermission('requerimientos.aprobar'); 
 
   const [data, setData] = useState<Requerimiento[]>([]);
   const [total, setTotal] = useState(0);
@@ -40,16 +60,19 @@ export default function RequerimientosPage() {
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [estadoFiltro, setEstadoFiltro] = useState<string>("todos"); // ← NUEVO ESTADO
   const PER_PAGE = 10;
   const [sortDescriptor, setSortDescriptor] = useState<SortDescriptor>({ column: "creado_en", direction: "descending" });
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedReq, setSelectedReq] = useState<RequerimientoCompleto | null>(null);
 
+  // ← MODIFICADO: Ahora pasa estadoFiltro al backend
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await requerimientosService.getAll(page, PER_PAGE, search);
+      const estadoParam = estadoFiltro === "todos" ? undefined : estadoFiltro;
+      const response = await requerimientosService.getAll(page, PER_PAGE, search, estadoParam);
       setData(response.data);
       setTotal(response.meta.total);
     } catch (error) {
@@ -58,7 +81,7 @@ export default function RequerimientosPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, estadoFiltro]); // ← Agregar estadoFiltro
 
   useEffect(() => {
     fetchData();
@@ -75,17 +98,29 @@ export default function RequerimientosPage() {
     });
   }, [sortDescriptor, data]);
 
-  // --- Handlers ---
+  // ← NUEVO: Contar por estado para mostrar badges
+  const estadosCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      todos: data.length,
+      borrador: 0,
+      revision: 0,
+      aprobado: 0,
+      rechazado: 0,
+    };
+    data.forEach(req => {
+      if (counts[req.estado] !== undefined) counts[req.estado]++;
+    });
+    return counts;
+  }, [data]);
+
+  // --- HANDLERS ---
 
   const handleCreate = () => {
     setSelectedReq(null);
     setIsModalOpen(true);
   };
 
-  const handleEdit = useCallback(async (reqSimple: Requerimiento) => {
-    if (reqSimple.estado !== 'borrador') {
-       return toast.error("Solo se pueden editar borradores");
-    }
+  const handleOpenDetail = useCallback(async (reqSimple: Requerimiento) => {
     const toastId = toast.loading("Cargando detalle...");
     try {
       const reqCompleto = await requerimientosService.getById(reqSimple.id);
@@ -99,11 +134,7 @@ export default function RequerimientosPage() {
   }, []);
 
   const handleDelete = useCallback(async (req: Requerimiento) => {
-    const ok = await confirm({ 
-      title: "Eliminar Requerimiento", 
-      message: `¿Desea eliminar ${req.codigo}?`, 
-      color: "danger" 
-    });
+    const ok = await confirm({ title: "Eliminar", message: `¿Eliminar ${req.codigo}?`, color: "danger" });
     if(!ok) return;
     try {
       await requerimientosService.delete(req.id);
@@ -116,12 +147,7 @@ export default function RequerimientosPage() {
   }, [confirm, fetchData]);
 
   const handleSendRevision = useCallback(async (req: Requerimiento) => {
-    const ok = await confirm({ 
-      title: "Enviar a Revisión", 
-      message: `¿Enviar ${req.codigo} para aprobación? No podrás editarlo después.`, 
-      confirmText: "Enviar",
-      color: "primary" 
-    });
+    const ok = await confirm({ title: "Enviar", message: `¿Enviar ${req.codigo} a revisión?`, color: "primary" });
     if(!ok) return;
     try {
       await requerimientosService.sendRevision(req.id);
@@ -135,66 +161,84 @@ export default function RequerimientosPage() {
 
   const onFormSubmit = async (dto: CrearRequerimientoDto) => {
     try {
-      if (selectedReq) {
-        await requerimientosService.update(selectedReq.id, dto);
-        toast.success("Requerimiento actualizado");
+      if (selectedReq) await requerimientosService.update(selectedReq.id, dto);
+      else await requerimientosService.create(dto);
+      
+      toast.success(selectedReq ? "Actualizado" : "Creado");
+      setIsModalOpen(false);
+      fetchData();
+    } catch (e) { throw e; }
+  };
+
+  const onReviewSubmit = async (dto: RevisarRequerimientoDto) => {
+    if (!selectedReq) return;
+    try {
+      await requerimientosService.review(selectedReq.id, dto);
+      
+      if (dto.accion === 'guardar') {
+        toast.success("Cambios guardados correctamente");
       } else {
-        await requerimientosService.create(dto);
-        toast.success("Requerimiento creado");
+        toast.success(`Requerimiento ${dto.accion === 'aprobar' ? 'aprobado' : 'rechazado'}`);
       }
+      
       setIsModalOpen(false);
       fetchData();
     } catch (error: unknown) {
-        throw error; 
+      throw error;
     }
   };
+
+  // --- RENDER CELL ---
 
   const renderCell = useCallback((item: Requerimiento, columnKey: React.Key) => {
     switch (columnKey) {
       case "codigo":
-        return (
-          <div className="flex items-center gap-2">
-             <FileText size={18} className="text-slate-400"/>
-             <span className={`font-bold ${config.textSize}`}>{item.codigo}</span>
-          </div>
-        );
+        return <span className={`font-bold ${config.textSize} flex gap-2 items-center`}><FileText size={18} className="text-slate-400"/>{item.codigo}</span>;
       case "estado":
-        return (
-          <Chip color={statusColorMap[item.estado]} size="sm" variant="flat" className="capitalize">
-             {item.estado}
-          </Chip>
-        );
+        return <Chip color={statusColorMap[item.estado]} size="sm" variant="flat" className="capitalize">{statusLabels[item.estado]}</Chip>;
       case "creado_en":
          return <span className={config.textSize}>{new Date(item.creado_en).toLocaleDateString()}</span>;
+      
       case "acciones":
-         // Solo mostramos acciones si es BORRADOR (según lógica backend)
-         if (item.estado !== 'borrador') {
-             return <span className="text-xs text-slate-400 italic">Solo lectura</span>;
+         if (item.estado === 'borrador' && CAN_EDIT) {
+             return (
+                 <div className="flex justify-center gap-2">
+                     <Tooltip content="Enviar a Revisión">
+                        <span onClick={() => handleSendRevision(item)} className="cursor-pointer text-warning hover:text-warning-600 p-2"><Send size={18} /></span>
+                     </Tooltip>
+                     <Tooltip content="Editar">
+                        <span onClick={() => handleOpenDetail(item)} className="cursor-pointer text-slate-400 hover:text-primary p-2"><Edit3 size={18} /></span>
+                     </Tooltip>
+                     <Tooltip content="Eliminar">
+                        <span onClick={() => handleDelete(item)} className="cursor-pointer text-danger hover:text-danger-400 p-2"><Trash2 size={18} /></span>
+                     </Tooltip>
+                 </div>
+             );
          }
+
+         if (item.estado === 'revision' && CAN_APPROVE) {
+            return (
+              <div className="flex justify-center gap-2">
+                  <Button size="sm" variant="flat" color="primary" onPress={() => handleOpenDetail(item)} startContent={<Edit3 size={16} />}>
+                    Revisar
+                  </Button>
+              </div>
+            );
+         }
+
          return (
-             <div className="flex justify-center gap-2">
-                 <Tooltip content="Enviar a Revisión">
-                    <span onClick={() => handleSendRevision(item)} className="cursor-pointer text-warning hover:text-warning-600 p-2">
-                      <Send size={18} />
-                    </span>
-                 </Tooltip>
-                 <Tooltip content="Editar">
-                    <span onClick={() => handleEdit(item)} className="cursor-pointer text-slate-400 hover:text-primary p-2">
-                      <Edit3 size={18} />
-                    </span>
-                 </Tooltip>
-                 <Tooltip content="Eliminar">
-                    <span onClick={() => handleDelete(item)} className="cursor-pointer text-danger hover:text-danger-400 p-2">
-                      <Trash2 size={18} />
-                    </span>
-                 </Tooltip>
-             </div>
-         )
+            <div className="flex justify-center">
+               <Tooltip content="Ver Detalle">
+                  <span onClick={() => handleOpenDetail(item)} className="cursor-pointer text-slate-400 hover:text-slate-800 p-2"><Eye size={20} /></span>
+               </Tooltip>
+            </div>
+         );
+
       default:
         const val = (item as unknown as Record<string, unknown>)[columnKey as string];
         return <span className={config.textSize}>{String(val || '')}</span>;
     }
-  }, [config, handleEdit, handleDelete, handleSendRevision]);
+  }, [config, CAN_EDIT, CAN_APPROVE, handleOpenDetail, handleDelete, handleSendRevision]);
 
   return (
     <div className="space-y-6 p-4">
@@ -203,10 +247,79 @@ export default function RequerimientosPage() {
           <h1 className="text-3xl font-bold text-slate-900">Requerimientos</h1>
           <p className={`${config.textSize} text-slate-500`}>Solicitudes de compra y abastecimiento.</p>
         </div>
-        <Button onPress={handleCreate} className="bg-slate-900 text-white" size={config.buttonSize} endContent={<Plus/>}>
-           <span className={config.textSize}>Nuevo Requerimiento</span>
-        </Button>
+        {CAN_CREATE && (
+            <Button onPress={handleCreate} className="bg-slate-900 text-white" size={config.buttonSize} endContent={<Plus/>}>
+               <span className={config.textSize}>Nuevo Requerimiento</span>
+            </Button>
+        )}
       </div>
+
+      {/* ← NUEVO: TABS DE FILTRO */}
+      <Tabs 
+        selectedKey={estadoFiltro} 
+        onSelectionChange={(key) => {
+          setEstadoFiltro(key as string);
+          setPage(1);
+        }}
+        variant="underlined"
+        classNames={{
+          tabList: "gap-6 w-full relative rounded-none p-0 border-b border-divider",
+          cursor: "w-full bg-slate-900",
+          tab: "max-w-fit px-4 h-12",
+          tabContent: "group-data-[selected=true]:text-slate-900 font-semibold"
+        }}
+      >
+        <Tab 
+          key="todos" 
+          title={
+            <div className="flex items-center gap-2">
+              <FileText size={18}/>
+              <span>Todos</span>
+              <Chip size="sm" variant="flat">{total}</Chip>
+            </div>
+          }
+        />
+        <Tab 
+          key="borrador" 
+          title={
+            <div className="flex items-center gap-2">
+              <Edit3 size={18}/>
+              <span>Borradores</span>
+              {estadosCounts.borrador > 0 && <Chip size="sm" variant="flat" color="default">{estadosCounts.borrador}</Chip>}
+            </div>
+          }
+        />
+        <Tab 
+          key="revision" 
+          title={
+            <div className="flex items-center gap-2">
+              <Clock size={18}/>
+              <span>En Revisión</span>
+              {estadosCounts.revision > 0 && <Chip size="sm" variant="flat" color="warning">{estadosCounts.revision}</Chip>}
+            </div>
+          }
+        />
+        <Tab 
+          key="aprobado" 
+          title={
+            <div className="flex items-center gap-2">
+              <CheckCircle size={18}/>
+              <span>Aprobados</span>
+              {estadosCounts.aprobado > 0 && <Chip size="sm" variant="flat" color="success">{estadosCounts.aprobado}</Chip>}
+            </div>
+          }
+        />
+        <Tab 
+          key="rechazado" 
+          title={
+            <div className="flex items-center gap-2">
+              <XCircle size={18}/>
+              <span>Rechazados</span>
+              {estadosCounts.rechazado > 0 && <Chip size="sm" variant="flat" color="danger">{estadosCounts.rechazado}</Chip>}
+            </div>
+          }
+        />
+      </Tabs>
 
       <DataTable<Requerimiento>
         columns={columns}
@@ -227,7 +340,9 @@ export default function RequerimientosPage() {
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)}
         onSubmit={onFormSubmit}
+        onReview={onReviewSubmit} 
         requerimientoAEditar={selectedReq}
+        canApprove={CAN_APPROVE}  
       />
     </div>
   );

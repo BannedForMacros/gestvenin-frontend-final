@@ -12,7 +12,7 @@ interface ConfirmOptions {
   message: string;
   confirmText?: string;
   cancelText?: string;
-  color?: "danger" | "primary" | "warning";
+  color?: "danger" | "primary" | "warning" | "success";
 }
 
 interface ConfirmContextType {

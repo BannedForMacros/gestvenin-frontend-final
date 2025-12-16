@@ -10,11 +10,15 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 
-// Importamos nuestro servicio y tipos
-import { authService } from '../../services/auth.service';
+// 1. Importamos el servicio API y el nuevo Hook de Auth
+import { authService } from '@/services/auth.service'; // Asegúrate que la ruta sea correcta
+import { useAuth } from '@/providers/AuthProvider';
 
 export default function LoginPage() {
   const router = useRouter();
+  
+  // 2. Extraemos la función 'login' del contexto
+  const { login: contextLogin } = useAuth();
   
   // Estados
   const [email, setEmail] = useState('');
@@ -31,25 +35,29 @@ export default function LoginPage() {
     setError('');
 
     try {
-      // 1. Llamada limpia al servicio
+      // A. Llamada a la API (Esto sigue igual, pedimos el token al backend)
       const data = await authService.login({ email, password });
       
-      // 2. Guardado de sesión encapsulado
-      authService.saveSession(data);
+      // B. Pasamos el resultado al Contexto
+      // El AuthProvider se encargará de:
+      // 1. Guardar el token en localStorage
+      // 2. Decodificar el usuario
+      // 3. Actualizar el estado global
+      // 4. Redirigir al /dashboard
+      contextLogin(data.accessToken, data.usuario);
 
-      // 3. Redirección
-      router.push('/dashboard');
+      // Nota: No hacemos router.push aqui, el provider lo hace.
 
     } catch (err: unknown) {
-      // Manejo estricto de errores (Solución al error "Unexpected any")
       if (err instanceof Error) {
         setError(err.message);
       } else {
         setError("Ocurrió un error inesperado");
       }
-    } finally {
-      setIsLoading(false);
-    }
+      setIsLoading(false); // Solo quitamos loading si hubo error
+    } 
+    // Si fue éxito, el loading se queda true un momento hasta que el provider redirige,
+    // evitando parpadeos.
   };
 
   return (
@@ -157,13 +165,12 @@ export default function LoginPage() {
         </motion.div>
       </div>
 
-      {/* --- LADO DERECHO (Igual que antes, para mantener estética) --- */}
+      {/* --- LADO DERECHO (Igual que antes) --- */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 relative overflow-hidden items-center justify-center p-12">
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-orange-600/20 rounded-full blur-[120px] translate-x-1/3 -translate-y-1/4"></div>
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] -translate-x-1/3 translate-y-1/4"></div>
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150"></div>
         
-        {/* Mockup visual */}
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}

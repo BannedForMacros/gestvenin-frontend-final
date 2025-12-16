@@ -1,20 +1,48 @@
-import { LoginRequest, LoginResponse, ApiError } from "../types/auth.types";
+import { LoginRequest, LoginResponse, ApiError, MenuItem } from "@/types/auth.types";
 import { API_URL, getAuthHeaders } from "@/lib/api.config";
+import { jwtDecode } from "jwt-decode";
+// Importamos los iconos
+import { 
+  LayoutDashboard, Package, ShoppingCart, Settings, Box, Tags, 
+  Warehouse, Store, ClipboardList, Ruler, FileText, Users, Shield, 
+  Eye, LucideIcon 
+} from "lucide-react";
 
-// Definimos una interfaz interna para manejar la respuesta cruda del backend
-// Esto le dice a TS: "El objeto es un LoginResponse, pero podría traer 'access_token' extra"
+// --- MAPEO DE ICONOS ---
+const ICON_MAP: Record<string, LucideIcon> = {
+  LayoutDashboard, Package, ShoppingCart, Settings, Box, Tags, 
+  Warehouse, Store, ClipboardList, Ruler, FileText, Users, Shield, Eye,
+  default: LayoutDashboard 
+};
+
+// Función auxiliar para transformar datos
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mapResponseToMenu = (items: any[]): MenuItem[] => {
+  return items.map((item) => {
+    const IconComponent = ICON_MAP[item.icono] || ICON_MAP.default;
+    return {
+      id: item.id, // <--- ✅ AHORA PASAMOS EL ID
+      title: item.titulo,
+      href: item.ruta || '',
+      icon: IconComponent,
+      items: item.hijos && item.hijos.length > 0 ? mapResponseToMenu(item.hijos) : undefined
+    };
+  });
+};
+
+// Interfaz interna para manejar inconsistencias del backend (accessToken vs access_token)
 interface BackendLoginResponse extends Partial<LoginResponse> {
   access_token?: string;
 }
 
 export const authService = {
+  
+  // --- LOGIN ---
   async login(credentials: LoginRequest): Promise<LoginResponse> {
     try {
       const response = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(credentials),
       });
 
@@ -25,49 +53,79 @@ export const authService = {
         const message = Array.isArray(errorData.message)
           ? errorData.message.join(", ")
           : errorData.message;
-
         throw new Error(message || "Error al iniciar sesión");
       }
 
-      // CORRECCIÓN ESLINT:
-      // En lugar de usar 'as any', casteamos a nuestra interfaz intermedia.
+      // Normalizamos la respuesta
       const rawData = data as BackendLoginResponse;
-
-      // Ahora TypeScript sabe que 'access_token' es una propiedad válida (opcional)
       const token = rawData.accessToken || rawData.access_token || "";
 
-      if (!token) {
-        throw new Error("La respuesta del servidor no contiene un token válido.");
-      }
+      if (!token) throw new Error("Token no recibido del servidor");
 
-      // Construimos el objeto final limpio asegurando que accessToken tenga valor
       const finalData: LoginResponse = {
         accessToken: token,
-        usuario: rawData.usuario! // Asumimos que usuario viene, o ajustamos el tipo según necesidad
+        usuario: rawData.usuario! 
       };
 
       return finalData;
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        throw new Error(error.message);
-      }
-      throw new Error(
-        "No se pudo conectar con el servidor (Verifica que el backend esté corriendo)"
-      );
+      if (error instanceof Error) throw new Error(error.message);
+      throw new Error("Error de conexión");
     }
   },
 
+  // --- GUARDAR SESIÓN (Clave 'token') ---
   saveSession(data: LoginResponse) {
     if (typeof window !== "undefined") {
       if (data.accessToken) {
-        localStorage.setItem("accessToken", data.accessToken);
+        // ✅ CLAVE CORRECTA: 'token' (coincide con api.config y AuthProvider)
+        localStorage.setItem("token", data.accessToken);
         localStorage.setItem("user", JSON.stringify(data.usuario));
-      } else {
-        console.error("⚠️ Error: Intentando guardar sesión sin token válido");
       }
     }
   },
 
+  // --- LOGOUT ---
+  logout() {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      // Forzamos recarga para limpiar estados de memoria
+      window.location.href = "/login";
+    }
+  },
+
+  // --- OBTENER MENÚS (Protegido contra 401) ---
+  async getMyMenus(): Promise<MenuItem[]> {
+    try {
+      const res = await fetch(`${API_URL}/auth/me/menu`, {
+        headers: getAuthHeaders(),
+        cache: 'no-store' 
+      });
+
+      // Si falla (401 Unauthorized), no lanzamos error fatal, devolvemos menú vacío.
+      // Esto evita la pantalla roja.
+      if (!res.ok) {
+        if (res.status === 401) {
+            console.warn("Sesión expirada o inválida al cargar menús.");
+            // Opcional: Podrías llamar a logout() aquí si quieres ser estricto
+        }
+        return [];
+      }
+      
+      const data = await res.json();
+      
+      if (Array.isArray(data)) {
+        return mapResponseToMenu(data);
+      }
+      return [];
+    } catch (error) {
+      console.error("Error al obtener menús:", error);
+      return []; // Retorno seguro
+    }
+  },
+
+  // --- REFRESH TOKEN ---
   async refreshSession(): Promise<void> {
     try {
       const response = await fetch(`${API_URL}/auth/me/refresh`, {
@@ -75,13 +133,9 @@ export const authService = {
         headers: getAuthHeaders(),
       });
 
-      if (!response.ok) {
-        throw new Error("No se pudo refrescar la sesión");
-      }
+      if (!response.ok) throw new Error("Falló refresh");
 
       const data = await response.json();
-      
-      // Aplicamos la misma lógica segura aquí
       const rawData = data as BackendLoginResponse;
       const token = rawData.accessToken || rawData.access_token || "";
 
@@ -92,31 +146,7 @@ export const authService = {
         });
       }
     } catch (error) {
-      console.error("Error refrescando permisos:", error);
+      console.error("Sesión caducada:", error);
     }
-  },
-
-  logout() {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
-    }
-  },
-
-  async getMyMenus() {
-    const res = await fetch(`${API_URL}/auth/me/menu`, {
-        headers: getAuthHeaders() 
-    });
-    if (!res.ok) throw new Error('Error cargando menús');
-    return res.json();
-  },
-
-  async getAllMenusConfig() {
-    const res = await fetch(`${API_URL}/auth/menus/todos`, { 
-      headers: getAuthHeaders()
-    });
-    if (!res.ok) throw new Error('Error cargando configuración de menús');
-    return res.json();
   }
 };

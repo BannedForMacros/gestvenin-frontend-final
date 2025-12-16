@@ -9,13 +9,13 @@ import {
 import { PaginatedResponse } from '@/types/common.types';
 
 export const requerimientosService = {
-  // Listar Paginado
-  async getAll(
+  // ← MODIFICADO: estado ahora es opcional pero sin valor por defecto
+    async getAll(
     page: number = 1, 
     limit: number = 10, 
     search: string = '', 
-    estado: string = ''
-  ): Promise<PaginatedResponse<Requerimiento>> {
+    estado?: string
+    ): Promise<PaginatedResponse<Requerimiento>> {
     const url = new URL(`${API_URL}/requerimientos`);
     url.searchParams.append('page', page.toString());
     url.searchParams.append('limit', limit.toString());
@@ -23,11 +23,17 @@ export const requerimientosService = {
     if (estado) url.searchParams.append('estado', estado);
 
     const res = await fetch(url.toString(), { headers: getAuthHeaders(), cache: 'no-store' });
-    if (!res.ok) throw new Error('Error al obtener requerimientos');
+    
+    // ← AGREGAR ESTO
+    if (!res.ok) {
+        const error = await res.json();
+        console.error('Error del backend:', error);
+        throw new Error(error.message || 'Error al obtener requerimientos');
+    }
+    
     return res.json();
-  },
+    },
 
-  // Obtener por ID (Completo con Items)
   async getById(id: number): Promise<RequerimientoCompleto> {
     const res = await fetch(`${API_URL}/requerimientos/${id}`, { headers: getAuthHeaders() });
     if (!res.ok) throw new Error('Error al obtener el requerimiento');

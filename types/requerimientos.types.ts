@@ -51,7 +51,7 @@ export interface EditarRequerimientoDto {
 }
 
 export interface RevisarRequerimientoDto {
-  accion: 'aprobar' | 'rechazar';
+  accion: 'aprobar' | 'rechazar' | 'guardar'; 
   observaciones?: string;
   items?: RequerimientoItemDto[];
 }

@@ -5,6 +5,7 @@ import { Providers } from "./providers";
 import { Toaster } from "sonner"; // 1. Importar Sonner
 import { ConfirmProvider } from "@/providers/ConfirmProvider"; // 2. Importar el Provider
 import { UIConfigProvider } from "@/providers/UIConfigProvider";
+import { AuthProvider } from "@/providers/AuthProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,12 +33,14 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Providers>
-          <UIConfigProvider>
-            <ConfirmProvider>
-              {children}
-              <Toaster position="top-right" richColors closeButton />
-            </ConfirmProvider>
-          </UIConfigProvider>
+          <AuthProvider>
+            <UIConfigProvider>
+              <ConfirmProvider>
+                {children}
+                <Toaster position="top-right" richColors closeButton />
+              </ConfirmProvider>
+            </UIConfigProvider>
+          </AuthProvider>
         </Providers>
       </body>
     </html>
