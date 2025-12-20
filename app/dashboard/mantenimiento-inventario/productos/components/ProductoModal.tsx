@@ -14,6 +14,7 @@ import { Categoria } from '@/types/categorias.types';
 import { unidadesService } from '@/services/unidades.service';
 import { categoriasService } from '@/services/categorias.service';
 import { useUIConfig } from "@/providers/UIConfigProvider";
+import { ConfirmButton } from '@/components/ui/ConfirmButton';
 
 interface ProductoModalProps {
   isOpen: boolean;
@@ -322,20 +323,16 @@ export function ProductoModal({ isOpen, onClose, onSubmit, productoAEditar }: Pr
               </div>
 
             </ModalBody>
-            <ModalFooter>
-              <Button color="danger" variant="flat" onPress={onClose} size={config.buttonSize}>
-                Cancelar
-              </Button>
-              <Button 
-                color="primary" 
-                onPress={handleSubmit} 
-                isLoading={loading}
-                size={config.buttonSize}
-                className="font-bold"
-              >
-                {productoAEditar ? 'Guardar Cambios' : 'Crear Producto'}
-              </Button>
-            </ModalFooter>
+              <ModalFooter>
+                <ConfirmButton
+                  onCancel={onClose}
+                  onConfirm={handleSubmit}
+                  isLoading={loading}
+                  confirmLabel={productoAEditar ? 'Guardar Cambios' : 'Crear Producto'}
+                  // confirmColor="success" <- Ya es verde por defecto
+                  // confirmVariant="flat"  <- Ya es flat por defecto
+                />
+              </ModalFooter>
           </>
         )}
       </ModalContent>

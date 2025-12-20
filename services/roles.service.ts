@@ -3,8 +3,10 @@ import { Rol, CreateRolDto, AsignarPermisosDto } from '@/types/roles.types';
 
 export const rolesService = {
   async getAll(): Promise<Rol[]> {
-    const res = await fetch(`${API_URL}/roles`, { 
-      headers: getAuthHeaders() 
+    // ⚠️ CRÍTICO: 'no-store' asegura que siempre traiga los datos frescos de la BD
+    const res = await fetch(`${API_URL}/roles`, {
+      headers: getAuthHeaders(),
+      cache: 'no-store' 
     });
     if (!res.ok) throw new Error('Error al obtener roles');
     return res.json();
@@ -16,28 +18,20 @@ export const rolesService = {
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
-    const result = await res.json();
-    
-    // CAMBIO IMPORTANTE: Lanzamos 'result' directo si hay error, 
-    // así conservamos propiedades extra como 'permisosFaltantes'
     if (!res.ok) {
-        throw result; 
+        const err = await res.json();
+        throw new Error(err.message || 'Error al crear rol');
     }
-    return result;
+    return res.json();
   },
 
-  async assignPermisos(rolId: number, data: AsignarPermisosDto) {
+  async assignPermisos(rolId: number, data: AsignarPermisosDto): Promise<Rol> {
     const res = await fetch(`${API_URL}/roles/${rolId}/permisos`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
-    const result = await res.json();
-    
-    // CAMBIO IMPORTANTE: Igual aquí, lanzamos el objeto completo
-    if (!res.ok) {
-        throw result;
-    }
-    return result;
+    if (!res.ok) throw new Error('Error al asignar permisos');
+    return res.json();
   }
 };

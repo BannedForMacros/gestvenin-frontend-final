@@ -14,7 +14,7 @@ import {
   SortDescriptor,
 } from "@heroui/react";
 import { Search } from "lucide-react";
-import { useUIConfig } from "@/providers/UIConfigProvider"; // Importamos el contexto
+import { useUIConfig } from "@/providers/UIConfigProvider";
 
 // Definición de las columnas
 export interface Column {
@@ -58,54 +58,53 @@ export function DataTable<T extends { id: number | string }>({
   renderCell,
 }: DataTableProps<T>) {
 
-  // 1. LEEMOS LA CONFIGURACIÓN DE UI (Tamaños de letra, inputs, etc.)
   const { config } = useUIConfig();
 
   const pages = Math.ceil(totalItems / perPage) || 1;
 
-  // Renderizado del buscador (Top Content)
+  // 🔍 TOP CONTENT - Buscador
   const topContent = React.useMemo(() => {
     return (
-      <div className="flex flex-col gap-4 mb-4">
-        <div className="flex justify-between gap-3 items-end">
-          <Input
-            isClearable
-            className="w-full sm:max-w-[44%]"
-            placeholder="Buscar..."
-            startContent={<Search className="text-default-400" />}
-            value={searchQuery}
-            onClear={() => onSearchChange("")}
-            onValueChange={onSearchChange}
-            variant="bordered"
-            // APLICAMOS TAMAÑOS DESDE LA CONFIGURACIÓN
-            size={config.inputSize} 
-            classNames={{
-              input: config.textSize, // El texto dentro del input
-              label: config.textSize
-            }}
-          />
-        </div>
+      <div className="flex flex-col gap-3 mb-3">
+        <Input
+          isClearable
+          className="w-full sm:max-w-md"
+          placeholder="Buscar..."
+          startContent={<Search size={18} className="text-gray-400" />}
+          value={searchQuery}
+          onClear={() => onSearchChange("")}
+          onValueChange={onSearchChange}
+          variant="bordered"
+          size={config.inputSize || "md"}
+          classNames={{
+            input: `${config.textSize || "text-sm"} text-gray-700`,
+            inputWrapper: "border-gray-300 hover:border-blue-400 data-[hover=true]:border-blue-400 group-data-[focus=true]:border-blue-500",
+            label: config.textSize || "text-sm"
+          }}
+        />
       </div>
     );
   }, [searchQuery, onSearchChange, config]);
 
-  // Renderizado de la paginación (Bottom Content)
+  // 📊 BOTTOM CONTENT - Paginación
   const bottomContent = React.useMemo(() => {
     return (
-      <div className="py-2 px-2 flex justify-between items-center">
-        <span className={`text-default-400 ${config.textSize}`}>
-          Total {totalItems} registros
+      <div className="py-2 px-2 flex flex-col sm:flex-row justify-between items-center gap-3">
+        <span className={`${config.textSize || "text-sm"} text-gray-500 font-medium`}>
+          Total de {totalItems} {totalItems === 1 ? 'registro' : 'registros'}
         </span>
         <Pagination
           isCompact
           showControls
-          showShadow
           color="primary"
           page={page}
           total={pages}
           onChange={onPageChange}
-          // Ajustamos el tamaño de la paginación según la config
           size={config.buttonSize === 'sm' ? 'sm' : config.buttonSize === 'lg' ? 'lg' : 'md'}
+          classNames={{
+            cursor: "bg-blue-500 text-white font-semibold shadow-sm",
+            item: "text-gray-600 hover:bg-gray-100",
+          }}
         />
       </div>
     );
@@ -113,7 +112,7 @@ export function DataTable<T extends { id: number | string }>({
 
   return (
     <Table
-      aria-label="Tabla de datos dinámica"
+      aria-label="Tabla de datos"
       isHeaderSticky
       bottomContent={bottomContent}
       bottomContentPlacement="outside"
@@ -122,11 +121,25 @@ export function DataTable<T extends { id: number | string }>({
       sortDescriptor={sortDescriptor}
       onSortChange={onSortChange}
       classNames={{
-        wrapper: "min-h-[322px]",
-        // Aplicamos el tamaño de letra de la configuración a la cabecera
-        th: `${config.textSize} font-bold text-slate-700 uppercase`, 
-        // Aplicamos el padding y tamaño de letra a las celdas
-        td: `${config.tableCellSize} text-slate-700`,
+        wrapper: "shadow-sm border border-gray-200 rounded-lg bg-white",
+        base: "overflow-visible",
+        table: "min-w-full",
+        // 📌 HEADER - Background sutil
+        th: [
+          `${config.textSize || "text-sm"}`,
+          "font-semibold",
+          "text-gray-700",
+          "bg-gray-50",
+          "uppercase",
+          "tracking-wide",
+        ].join(" "),
+        // 📌 CELDAS - Limpias
+        td: [
+          `${config.tableCellSize || config.textSize || "text-sm"}`,
+          "text-gray-700",
+        ].join(" "),
+        // 📌 FILAS - Hover suave
+        tr: "hover:bg-gray-50 transition-colors",
       }}
     >
       <TableHeader columns={columns}>
@@ -142,9 +155,28 @@ export function DataTable<T extends { id: number | string }>({
       </TableHeader>
       <TableBody
         items={data}
-        loadingContent={<Spinner label="Cargando..." size="lg" />}
+        loadingContent={
+          <div className="flex flex-col items-center justify-center py-10 gap-3">
+            <Spinner size="lg" color="primary" />
+            <p className={`${config.textSize || "text-sm"} text-gray-500`}>
+              Cargando datos...
+            </p>
+          </div>
+        }
         isLoading={isLoading}
-        emptyContent={<div className={`p-4 ${config.textSize}`}>{emptyContent}</div>}
+        emptyContent={
+          <div className="flex flex-col items-center justify-center py-10 gap-2">
+            <div className="w-14 h-14 bg-gray-100 rounded-lg flex items-center justify-center mb-1">
+              <Search size={24} className="text-gray-400" />
+            </div>
+            <p className={`${config.textSize || "text-sm"} text-gray-600 font-medium`}>
+              {emptyContent}
+            </p>
+            <p className="text-xs text-gray-400">
+              Intenta ajustar tu búsqueda
+            </p>
+          </div>
+        }
       >
         {(item) => (
           <TableRow key={item.id}>

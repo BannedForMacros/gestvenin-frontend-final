@@ -1,40 +1,37 @@
-'use client'
+'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { 
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
   Button, Chip, Tooltip, useDisclosure, Modal, ModalContent, 
-  ModalHeader, ModalBody, ModalFooter, Input, Checkbox 
+  ModalHeader, ModalBody, ModalFooter, Input, Checkbox, ScrollShadow
 } from "@heroui/react";
-import { Plus, Shield, Lock, AlertCircle, XCircle } from "lucide-react";
+import { Plus, Shield, Lock, RefreshCw, Layers } from "lucide-react";
+import { toast } from "sonner";
+
 import { rolesService } from '@/services/roles.service';
 import { permisosService } from '@/services/permisos.service';
-import { Rol } from '@/types/roles.types';
+import { Rol, CreateRolDto } from '@/types/roles.types';
 import { Permiso } from '@/types/permisos.types';
 
-// 1. Definimos la forma del error que viene del Backend
-interface BackendError {
-    message: string;
-    error?: string;
-    statusCode?: number;
-    permisosFaltantes?: string[]; // Esta es la clave
-}
-
 export default function RolesPage() {
+  // --- ESTADOS ---
   const [roles, setRoles] = useState<Rol[]>([]);
   const [allPermisos, setAllPermisos] = useState<Permiso[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [error, setError] = useState<string | null>(null);
-
+  // Estados del Modal
   const { isOpen, onOpen, onOpenChange } = useDisclosure();
   const [modalMode, setModalMode] = useState<'create' | 'permisos'>('create');
   const [selectedRol, setSelectedRol] = useState<Rol | null>(null);
 
+  // Estados de Formulario
   const [nombreRol, setNombreRol] = useState('');
   const [selectedPermisosIds, setSelectedPermisosIds] = useState<Set<number>>(new Set());
 
-  const fetchData = async () => {
+  // --- 1. CARGA DE DATOS ---
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
     try {
       const [rolesData, permisosData] = await Promise.all([
         rolesService.getAll(),
@@ -42,81 +39,81 @@ export default function RolesPage() {
       ]);
       setRoles(rolesData);
       setAllPermisos(permisosData);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
+      toast.error("Error al cargar datos del sistema");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  // --- 2. LÓGICA DINÁMICA (Agrupación) ---
+  const groupedPermisos = useMemo(() => {
+    return allPermisos.reduce((acc, curr) => {
+      if (!acc[curr.modulo]) acc[curr.modulo] = [];
+      acc[curr.modulo].push(curr);
+      return acc;
+    }, {} as Record<string, Permiso[]>);
+  }, [allPermisos]);
 
   // --- MANEJADORES ---
 
   const handleOpenCreate = () => {
-    setError(null);
     setModalMode('create');
     setNombreRol('');
     onOpen();
   };
 
   const handleOpenPermisos = (rol: Rol) => {
-    setError(null);
     setModalMode('permisos');
     setSelectedRol(rol);
+    // Cargar permisos actuales del rol
     const currentIds = new Set(
-      rol.rolPermisos
-        ?.filter(rp => rp.activo)
-        .map(rp => rp.permiso.id)
+      rol.rolPermisos?.filter(rp => rp.activo).map(rp => rp.permiso.id)
     );
     setSelectedPermisosIds(currentIds);
     onOpen();
   };
 
   const handleSubmit = async () => {
-    setError(null);
     try {
       if (modalMode === 'create') {
-        if(!nombreRol.trim()) throw { message: "El nombre del rol es obligatorio." }; // Lanzamos objeto para ser consistente
-        await rolesService.create({ nombre: nombreRol });
+        if (!nombreRol.trim()) {
+            toast.warning("El nombre del rol es obligatorio");
+            return;
+        }
+        
+        // ✅ Uso estricto del DTO
+        const nuevoRol: CreateRolDto = { nombre: nombreRol };
+        await rolesService.create(nuevoRol);
+        toast.success("Rol creado correctamente");
+
       } else if (modalMode === 'permisos' && selectedRol) {
         await rolesService.assignPermisos(selectedRol.id, {
           permisosIds: Array.from(selectedPermisosIds)
         });
-      }
-      onOpenChange(); 
-      fetchData();    
-    } catch (err: unknown) { // 2. Usamos unknown en lugar de any
-      
-      // 3. Convertimos 'err' a nuestra interfaz BackendError
-      // Esto satisface a ESLint y nos da autocompletado
-      const errorData = err as BackendError; 
-
-      let mensaje = "Ocurrió un error inesperado.";
-
-      // Lógica para detectar permisos faltantes
-      if (errorData.permisosFaltantes && Array.isArray(errorData.permisosFaltantes)) {
-        const faltantes = errorData.permisosFaltantes.join(', ');
-        mensaje = `Acceso denegado. Te faltan los permisos: ${faltantes}`;
-      } 
-      else if (errorData.message) {
-         mensaje = errorData.message;
-         if(mensaje === "No tienes permisos para esta acción" && !errorData.permisosFaltantes) {
-            mensaje = "No tienes permisos suficientes para realizar esta acción.";
-         }
+        toast.success("Permisos actualizados correctamente");
       }
 
-      setError(mensaje);
+      onOpenChange(); // Cerrar modal
+      fetchData();    // Recargar datos
+    } catch (error: unknown) {
+      // ✅ Manejo de errores sin 'any'
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else if (typeof error === 'object' && error !== null && 'message' in error) {
+        toast.error(String((error as { message: unknown }).message));
+      } else {
+        toast.error("Ocurrió un error inesperado");
+      }
     }
   };
 
-  const groupedPermisos = allPermisos.reduce((acc, curr) => {
-    if (!acc[curr.modulo]) acc[curr.modulo] = [];
-    acc[curr.modulo].push(curr);
-    return acc;
-  }, {} as Record<string, Permiso[]>);
+  // --- LÓGICA DE CHECKBOXES ---
 
   const togglePermiso = (id: number) => {
     const newSet = new Set(selectedPermisosIds);
@@ -140,146 +137,130 @@ export default function RolesPage() {
   };
 
   return (
-    <div className="space-y-8 p-2">
+    <div className="space-y-6 p-2">
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Gestión de Roles</h1>
-          <p className="text-base text-slate-500 mt-1">Crea perfiles y asigna permisos de acceso.</p>
+          <p className="text-slate-500">Administra los perfiles de acceso.</p>
         </div>
-        
-        <Button 
-          onPress={handleOpenCreate} 
-          color="success" 
-          variant="flat"
-          className="font-medium text-base" 
-          endContent={<Plus size={20}/>}
-          size="lg"
-        >
-          Nuevo Rol
-        </Button>
+        <div className="flex gap-2">
+            <Button isIconOnly variant="light" onPress={fetchData} title="Recargar datos">
+                <RefreshCw size={20} className={isLoading ? "animate-spin" : ""}/>
+            </Button>
+            <Button onPress={handleOpenCreate} className="bg-slate-900 text-white" startContent={<Plus size={20}/>}>
+              Nuevo Rol
+            </Button>
+        </div>
       </div>
 
-      <Table aria-label="Tabla de roles" className="text-base">
+      {/* Tabla */}
+      <Table aria-label="Tabla de roles">
         <TableHeader>
-          <TableColumn className="text-sm uppercase font-bold">ROL</TableColumn>
-          <TableColumn className="text-sm uppercase font-bold">PERMISOS ASIGNADOS</TableColumn>
-          <TableColumn className="text-sm uppercase font-bold">TIPO</TableColumn>
-          <TableColumn className="text-sm uppercase font-bold" align="center">ACCIONES</TableColumn>
+          <TableColumn>ROL</TableColumn>
+          <TableColumn>PERMISOS</TableColumn>
+          <TableColumn>TIPO</TableColumn>
+          <TableColumn align="center">ACCIONES</TableColumn>
         </TableHeader>
-        <TableBody emptyContent={"No hay roles registrados"} isLoading={isLoading}>
-          {roles.map((rol) => (
-            <TableRow key={rol.id} className="h-14"> 
+        <TableBody items={roles} emptyContent={"No hay roles registrados"} isLoading={isLoading}>
+          {(rol) => (
+            <TableRow key={rol.id}>
               <TableCell>
                 <div className="flex items-center gap-3">
-                    <Shield size={22} className="text-orange-600"/>
-                    <span className="font-bold text-base text-slate-800">{rol.nombre}</span>
+                    <div className="p-2 bg-orange-100 rounded-lg text-orange-600">
+                        <Shield size={18} />
+                    </div>
+                    <span className="font-bold text-slate-700">{rol.nombre}</span>
                 </div>
               </TableCell>
               <TableCell>
-                <div className="flex gap-1 flex-wrap max-w-xs">
-                    {(rol.rolPermisos || []).length > 0 ? (
-                        <span className="text-sm text-slate-600 font-medium">
-                            {rol.rolPermisos.length} permisos activos
-                        </span>
-                    ) : (
-                        <span className="text-sm text-slate-400 italic">Sin permisos</span>
-                    )}
+                <div className="flex gap-1">
+                    <Chip size="sm" variant="flat" color="warning">
+                        {(rol.rolPermisos?.filter(p => p.activo).length || 0)} permisos
+                    </Chip>
                 </div>
               </TableCell>
               <TableCell>
                 {rol.esSistema ? (
-                    <Chip color="secondary" variant="flat" size="md" className="text-sm">Sistema</Chip>
+                    <Chip color="secondary" variant="dot" size="sm">Sistema</Chip>
                 ) : (
-                    <Chip color="default" variant="flat" size="md" className="text-sm">Personalizado</Chip>
+                    <Chip color="success" variant="dot" size="sm">Personalizado</Chip>
                 )}
               </TableCell>
               <TableCell>
-                <div className="flex justify-center gap-2">
+                <div className="flex justify-center">
                   <Tooltip content="Gestionar Permisos">
-                    <span 
-                        onClick={() => handleOpenPermisos(rol)} 
-                        className="text-slate-400 cursor-pointer active:opacity-50 hover:text-orange-600 transition-colors p-2"
-                    >
-                      <Lock size={22} />
+                    <span onClick={() => handleOpenPermisos(rol)} className="text-slate-400 cursor-pointer hover:text-slate-800 p-2">
+                      <Lock size={20} />
                     </span>
                   </Tooltip>
                 </div>
               </TableCell>
             </TableRow>
-          ))}
+          )}
         </TableBody>
       </Table>
 
+      {/* MODAL DINÁMICO */}
       <Modal 
         isOpen={isOpen} 
         onOpenChange={onOpenChange} 
-        placement="top-center"
-        size={modalMode === 'permisos' ? '3xl' : 'lg'} 
+        size={modalMode === 'permisos' ? '4xl' : 'md'} 
         scrollBehavior="inside"
       >
         <ModalContent>
           {(onClose) => (
             <>
               <ModalHeader className="flex flex-col gap-1">
-                <span className="text-2xl font-bold">
-                    {modalMode === 'create' ? 'Crear Nuevo Rol' : `Permisos de: ${selectedRol?.nombre}`}
-                </span>
+                 <span className="text-xl font-bold">
+                    {modalMode === 'create' ? 'Crear Nuevo Rol' : `Configurar Permisos: ${selectedRol?.nombre}`}
+                 </span>
               </ModalHeader>
               
               <ModalBody>
-                {error && (
-                    <div className="bg-danger-50 text-danger-600 px-4 py-3 rounded-xl flex items-start gap-3 border border-danger-100 mb-2">
-                        <AlertCircle className="shrink-0 mt-0.5" size={20}/>
-                        <div className="flex-1">
-                            <p className="font-semibold text-sm">Error de Permisos</p>
-                            <p className="text-sm">{error}</p>
-                        </div>
-                        <button onClick={() => setError(null)} className="text-danger-400 hover:text-danger-700">
-                            <XCircle size={18}/>
-                        </button>
-                    </div>
-                )}
-
                 {modalMode === 'create' ? (
                   <div className="py-4">
                       <Input
                         autoFocus
                         label="Nombre del Rol"
-                        placeholder="Ej: Cajero Turno Tarde"
+                        placeholder="Ej: Supervisor de Caja"
                         variant="bordered"
                         value={nombreRol}
                         onValueChange={setNombreRol}
-                        classNames={{
-                            label: "text-base",
-                            input: "text-base"
-                        }}
-                        size="lg"
                       />
                   </div>
                 ) : (
-                  <div className="space-y-8">
+                  // --- SECCIÓN DINÁMICA DE PERMISOS ---
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-2">
+                    {Object.keys(groupedPermisos).length === 0 && <p className="text-slate-500">Cargando catálogo...</p>}
+                    
                     {Object.entries(groupedPermisos).map(([modulo, items]) => (
-                      <div key={modulo} className="bg-slate-50 p-5 rounded-xl border border-slate-100">
-                        <div className="flex justify-between items-center mb-4">
-                            <h4 className="text-xl font-bold text-slate-800 flex items-center gap-2 capitalize">
-                                {modulo}
-                            </h4>
-                            <Button size="sm" variant="light" color="primary" onPress={() => toggleModulo(modulo)} className="text-base">
-                                Seleccionar todo
+                      <div key={modulo} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                        
+                        {/* Cabecera del Módulo */}
+                        <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <Layers size={16} className="text-slate-500"/>
+                                <span className="font-bold text-slate-700">{modulo}</span>
+                            </div>
+                            <Button size="sm" variant="light" color="primary" onPress={() => toggleModulo(modulo)}>
+                                {items.every(p => selectedPermisosIds.has(p.id)) ? 'Desmarcar' : 'Todos'}
                             </Button>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                        {/* Lista de Permisos */}
+                        <div className="p-4 grid grid-cols-1 gap-3">
                             {items.map((permiso) => (
                                 <Checkbox 
                                     key={permiso.id}
                                     isSelected={selectedPermisosIds.has(permiso.id)}
                                     onValueChange={() => togglePermiso(permiso.id)}
-                                    size="lg" 
-                                    classNames={{ 
-                                        label: "text-base text-slate-700 font-medium" 
-                                    }}
+                                    classNames={{ label: "text-sm text-slate-600" }}
                                 >
-                                    {permiso.nombre}
+                                    <div className="flex flex-col">
+                                        <span className="font-medium text-slate-800">{permiso.nombre}</span>
+                                        <span className="text-xs text-slate-400">{permiso.descripcion || permiso.codigo}</span>
+                                    </div>
                                 </Checkbox>
                             ))}
                         </div>
@@ -289,25 +270,12 @@ export default function RolesPage() {
                 )}
               </ModalBody>
 
-              <ModalFooter className="py-4">
-                <Button 
-                    color="danger" 
-                    variant="flat" 
-                    onPress={onClose}
-                    size="lg"
-                    className="font-medium text-base"
-                >
+              <ModalFooter>
+                <Button color="danger" variant="light" onPress={onClose}>
                   Cancelar
                 </Button>
-                
-                <Button 
-                    color="success" 
-                    variant="flat" 
-                    onPress={handleSubmit}
-                    size="lg"
-                    className="font-bold text-base px-8 border-1 border-success-200"
-                >
-                  {modalMode === 'create' ? 'Crear Rol' : 'Guardar Cambios'}
+                <Button className="bg-slate-900 text-white" onPress={handleSubmit}>
+                  {modalMode === 'create' ? 'Crear Rol' : 'Guardar Permisos'}
                 </Button>
               </ModalFooter>
             </>
